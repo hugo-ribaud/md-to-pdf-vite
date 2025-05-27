@@ -1,10 +1,10 @@
 import { dirname, join } from 'path';
 import express, { NextFunction, Request, Response } from 'express';
+import puppeteer, { Browser, PDFOptions } from 'puppeteer';
 
 import { createError } from '../middleware/errorHandler.js';
 import { fileURLToPath } from 'url';
 import { marked } from 'marked';
-import puppeteer from 'puppeteer';
 import { readFile } from 'fs/promises';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -122,6 +122,8 @@ const getHtmlTemplate = (
 router.post(
   '/:fileId',
   async (req: Request, res: Response, next: NextFunction) => {
+    let browser: Browser | null = null;
+
     try {
       const { fileId } = req.params;
       const { title, options = {} } = req.body;
@@ -145,54 +147,88 @@ router.post(
       }
 
       // Convert markdown to HTML
-      const htmlContent = marked(markdownContent);
+      const htmlContent = await marked(markdownContent);
       const fullHtml = getHtmlTemplate(
         htmlContent,
         title || 'Markdown Document'
       );
 
       // Generate PDF using Puppeteer
-      const browser = await puppeteer.launch({
+      browser = await puppeteer.launch({
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-gpu',
+        ],
       });
 
-      try {
-        const page = await browser.newPage();
-        await page.setContent(fullHtml, { waitUntil: 'networkidle0' });
+      const page = await browser.newPage();
 
-        // PDF options
-        const pdfOptions = {
-          format: 'A4' as const,
-          printBackground: true,
-          margin: {
-            top: '1in',
-            right: '1in',
-            bottom: '1in',
-            left: '1in',
-          },
-          ...options,
-        };
+      // Set viewport for consistent rendering
+      await page.setViewport({ width: 1200, height: 800 });
 
-        const pdfBuffer = await page.pdf(pdfOptions);
+      // Set content and wait for it to load completely
+      await page.setContent(fullHtml, {
+        waitUntil: ['networkidle0', 'domcontentloaded'],
+        timeout: 30000,
+      });
 
-        // Set response headers for PDF download
-        const filename = title
-          ? `${title.replace(/[^a-z0-9]/gi, '_')}.pdf`
-          : `markdown_${fileId}.pdf`;
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader(
-          'Content-Disposition',
-          `attachment; filename="${filename}"`
-        );
-        res.setHeader('Content-Length', pdfBuffer.length);
+      // PDF options
+      const pdfOptions: PDFOptions = {
+        format: 'A4',
+        printBackground: true,
+        margin: {
+          top: '1in',
+          right: '1in',
+          bottom: '1in',
+          left: '1in',
+        },
+        preferCSSPageSize: true,
+        ...options,
+      };
 
-        // Send PDF
-        res.send(pdfBuffer);
-      } finally {
-        await browser.close();
+      const pdfBuffer = await page.pdf(pdfOptions);
+
+      // Close browser before sending response
+      await browser.close();
+      browser = null;
+
+      // Validate PDF buffer
+      if (!pdfBuffer || pdfBuffer.length === 0) {
+        throw createError('Failed to generate PDF - empty buffer', 500);
       }
+
+      // Set response headers for PDF download
+      const filename = title
+        ? `${title.replace(/[^a-z0-9\s\-_]/gi, '_').replace(/\s+/g, '_')}.pdf`
+        : `markdown_${fileId}.pdf`;
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${filename}"`
+      );
+      res.setHeader('Content-Length', pdfBuffer.length.toString());
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+
+      // Send PDF buffer
+      res.end(pdfBuffer, 'binary');
     } catch (error) {
+      // Ensure browser is closed on error
+      if (browser) {
+        try {
+          await browser.close();
+        } catch (closeError) {
+          console.error('Error closing browser:', closeError);
+        }
+      }
       next(error);
     }
   }
@@ -252,7 +288,7 @@ router.get(
       }
 
       // Convert markdown to HTML
-      const htmlContent = marked(markdownContent);
+      const htmlContent = await marked(markdownContent);
       const fullHtml = getHtmlTemplate(htmlContent, 'Preview');
 
       res.setHeader('Content-Type', 'text/html');
