@@ -118,6 +118,103 @@ const getHtmlTemplate = (
 </body>
 </html>`;
 
+// Live preview - convert markdown content directly to PDF
+router.post(
+  '/preview',
+  async (req: Request, res: Response, next: NextFunction) => {
+    let browser: Browser | null = null;
+
+    try {
+      const { content, title = 'Live Preview', options = {} } = req.body;
+
+      // Validate input
+      if (!content || typeof content !== 'string') {
+        throw createError('Markdown content is required', 400);
+      }
+
+      if (content.length > 1024 * 1024) {
+        // 1MB limit for live preview
+        throw createError('Content too large for live preview (max 1MB)', 400);
+      }
+
+      // Convert markdown to HTML
+      const htmlContent = await marked(content);
+      const fullHtml = getHtmlTemplate(htmlContent, title);
+
+      // Generate PDF using Puppeteer
+      browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-gpu',
+        ],
+      });
+
+      const page = await browser.newPage();
+
+      // Set viewport for consistent rendering
+      await page.setViewport({ width: 1200, height: 800 });
+
+      // Set content and wait for it to load completely
+      await page.setContent(fullHtml, {
+        waitUntil: ['networkidle0', 'domcontentloaded'],
+        timeout: 15000, // Shorter timeout for live preview
+      });
+
+      // PDF options optimized for preview
+      const pdfOptions: PDFOptions = {
+        format: 'A4',
+        printBackground: true,
+        margin: {
+          top: '1in',
+          right: '1in',
+          bottom: '1in',
+          left: '1in',
+        },
+        preferCSSPageSize: true,
+        ...options,
+      };
+
+      const pdfBuffer = await page.pdf(pdfOptions);
+
+      // Close browser before sending response
+      await browser.close();
+      browser = null;
+
+      // Validate PDF buffer
+      if (!pdfBuffer || pdfBuffer.length === 0) {
+        throw createError('Failed to generate PDF preview', 500);
+      }
+
+      // Set response headers for PDF preview (inline display)
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'inline; filename="preview.pdf"');
+      res.setHeader('Content-Length', pdfBuffer.length.toString());
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+
+      // Send PDF buffer
+      res.end(pdfBuffer, 'binary');
+    } catch (error) {
+      // Ensure browser is closed on error
+      if (browser) {
+        try {
+          await browser.close();
+        } catch (closeError) {
+          console.error('Error closing browser:', closeError);
+        }
+      }
+      next(error);
+    }
+  }
+);
+
 // Convert markdown to PDF
 router.post(
   '/:fileId',
