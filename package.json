@@ -1,0 +1,49 @@
+{
+  "name": "markdown-to-pdf-converter",
+  "version": "1.0.0",
+  "description": "An online web application that converts Markdown files to well-formatted PDF documents",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"bun run dev:client\" \"bun run dev:server\"",
+    "dev:client": "cd client && vite",
+    "dev:server": "cd server && bun run dev",
+    "build": "bun run build:client && bun run build:server",
+    "build:client": "cd client && vite build",
+    "build:server": "cd server && bun run build",
+    "preview": "cd client && vite preview",
+    "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
+    "lint:fix": "eslint . --ext .js,.jsx,.ts,.tsx --fix",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "clean": "rimraf client/dist server/dist node_modules/.cache"
+  },
+  "keywords": [
+    "markdown",
+    "pdf",
+    "converter",
+    "react",
+    "express",
+    "puppeteer",
+    "web-app"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "eslint": "^8.55.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-react": "^7.33.2",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "prettier": "^3.1.1",
+    "rimraf": "^5.0.5",
+    "@types/node": "^20.10.5"
+  },
+  "engines": {
+    "bun": ">=1.0.0",
+    "node": ">=18.0.0"
+  },
+  "workspaces": [
+    "client",
+    "server"
+  ]
+}
